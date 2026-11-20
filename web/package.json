@@ -1,0 +1,19 @@
+{
+  "name": "pop-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:wasm": "cd .. && wasm-pack build --target web --release --out-dir web/src/wasm --out-name pop_engine",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

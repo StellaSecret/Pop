@@ -68,6 +68,7 @@ dépôt. Pour les régénérer après une modification Rust : `make wasm`.
 ## Contrôles
 
 - Cliquez / touchez un ballon pour l'éclater.
+- **Arme** : clic simple (1 tir par appui), fusil semi-automatique (~3 t/s), fusil automatique (maintenez pour tirer à ~12 t/s), lance-flammes (cône continu) ou grenade (arc + explosion de rayon 70 px). Les tirs partent du bas de l'écran vers le curseur et les projectiles sont visibles.
 - Enchaînez les éclats en moins de 2 secondes pour augmenter le combo.
 - **Mode** : Arcade (sans fin) ou Défi (nombre de ballons fixe, sans réapparition).
 - **Défi** : saisissez votre nom avant de commencer ; le chrono s'arrête au dernier ballon et un message personnalisé s'affiche.

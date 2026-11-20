@@ -101,3 +101,53 @@ test("le défi se termine avec un message personnalisé", async ({ page }) => {
   await expect.poll(async () => page.evaluate(() => window.__POP__?.getStats().completed ?? false)).toBe(true);
   await expect.poll(async () => page.evaluate(() => window.__POP__?.getStats().finishTime ?? 0)).toBeGreaterThan(0);
 });
+
+test("les armes ont des cadences distinctes", async ({ page }) => {
+  await boot(page);
+  await expect(page.locator("#weapon option")).toHaveCount(4);
+  await expect(page.locator("#weapon")).toHaveValue("click");
+
+  const box = (await page.locator("#game").boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+
+  await page.mouse.click(x, y);
+  await page.mouse.click(x, y);
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getShotCount() ?? 0)).toBe(2);
+
+  await page.locator("#weapon").selectOption("auto");
+  const beforeAuto = await page.evaluate(() => window.__POP__?.getShotCount() ?? 0);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(250);
+  await page.mouse.up();
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getShotCount() ?? 0)).toBeGreaterThanOrEqual(beforeAuto + 2);
+});
+
+test("les projectiles et effets spéciaux sont visibles", async ({ page }) => {
+  await boot(page);
+  const box = (await page.locator("#game").boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  const counts = async () =>
+    page.evaluate(() => window.__POP__?.getEffectCounts() ?? { bullets: 0, flames: 0, grenades: 0, blasts: 0 });
+
+  await page.locator("#weapon").selectOption("auto");
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await expect.poll(async () => (await counts()).bullets).toBeGreaterThan(0);
+  await page.mouse.up();
+  await expect.poll(async () => (await counts()).bullets).toBe(0);
+
+  await page.locator("#weapon").selectOption("flame");
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await expect.poll(async () => (await counts()).flames).toBeGreaterThan(0);
+  await page.mouse.up();
+  await expect.poll(async () => (await counts()).flames).toBe(0);
+
+  await page.locator("#weapon").selectOption("grenade");
+  await page.mouse.click(x, y);
+  await expect.poll(async () => (await counts()).grenades).toBeGreaterThan(0);
+  await expect.poll(async () => (await counts()).blasts).toBeGreaterThan(0);
+});

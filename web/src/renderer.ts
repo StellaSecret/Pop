@@ -1,3 +1,4 @@
+import type { PlayEffects } from "./effects";
 import { BALLOON_STATE, BALLOON_VIEW, type Snapshot } from "./engine";
 
 const TAU = Math.PI * 2;
@@ -39,7 +40,7 @@ export class Renderer {
     this.background.addColorStop(1, "#111033");
   }
 
-  draw(snapshot: Snapshot): void {
+  draw(snapshot: Snapshot, effects: PlayEffects): void {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = this.background ?? "#0a1129";
@@ -59,6 +60,7 @@ export class Renderer {
       }
       this.drawBalloon(x, y, radius, color);
     }
+    effects.draw(ctx);
   }
 
   private drawBalloon(x: number, y: number, radius: number, color: number): void {

@@ -1,5 +1,6 @@
 import "./style.css";
 import { AudioManager, type AudioStatus } from "./audio";
+import { PlayEffects, type EffectCounts, type FlameAim } from "./effects";
 import {
   BALLOON_STATE,
   BALLOON_VIEW,
@@ -9,7 +10,7 @@ import {
   type Snapshot,
 } from "./engine";
 import { Renderer } from "./renderer";
-import { UI } from "./ui";
+import { UI, type Weapon } from "./ui";
 
 declare global {
   interface Window {
@@ -21,6 +22,9 @@ declare global {
       getDifficulty(): number;
       firstActiveBalloon(): { x: number; y: number; radius: number } | null;
       popAt(x: number, y: number): PopEvent;
+      getWeapon(): Weapon;
+      getShotCount(): number;
+      getEffectCounts(): EffectCounts;
     };
   }
 }
@@ -33,6 +37,13 @@ function required<T extends HTMLElement>(id: string): T {
   return element as T;
 }
 
+const FIRE_INTERVAL_MS: Record<Weapon, number> = {
+  click: 0,
+  auto: 80,
+  flame: 0,
+  grenade: 1200,
+};
+
 async function main(): Promise<void> {
   const stage = required<HTMLElement>("stage");
   const canvas = required<HTMLCanvasElement>("game");
@@ -43,9 +54,22 @@ async function main(): Promise<void> {
   renderer.setPalette(engine.gameInfo.palette);
 
   const audio = new AudioManager();
+  const effects = new PlayEffects((popped) => {
+    if (popped) {
+      audio.play();
+    }
+  });
   let currentDifficulty = 1;
   let playerName = "";
   let challengeAnnounced = false;
+  let weapon: Weapon = "click";
+  let pointerHeld = false;
+  let pointerX = 0;
+  let pointerY = 0;
+  let lastShotAt = Number.NEGATIVE_INFINITY;
+  let shotCount = 0;
+  let playWidth = initial.width;
+  let playHeight = initial.height;
   let latestStats: FrameStats = {
     score: 0,
     combo: 0,
@@ -69,8 +93,16 @@ async function main(): Promise<void> {
   }
 
   const ui = new UI(engine.gameInfo.difficulties, {
+    onWeapon(value) {
+      weapon = value;
+      pointerHeld = false;
+      lastShotAt = Number.NEGATIVE_INFINITY;
+      effects.clear();
+    },
     onMode(mode) {
       ui.setMode(mode);
+      pointerHeld = false;
+      effects.clear();
       ui.hideChallengeSetup();
       ui.hideChallengeComplete();
       challengeAnnounced = false;
@@ -109,6 +141,7 @@ async function main(): Promise<void> {
       ui.setRunning(engine.isRunning());
     },
     onRestart() {
+      effects.clear();
       engine.restart();
       ui.hideChallengeComplete();
       challengeAnnounced = false;
@@ -122,6 +155,7 @@ async function main(): Promise<void> {
       }
     },
     onChallengeStart(name) {
+      effects.clear();
       playerName = name.trim();
       const target = challengeTarget();
       ui.setTarget(target);
@@ -132,6 +166,7 @@ async function main(): Promise<void> {
       ui.setRunning(true);
     },
     onChallengeCancel() {
+      effects.clear();
       ui.hideChallengeSetup();
       ui.hideChallengeComplete();
       challengeAnnounced = false;
@@ -141,12 +176,14 @@ async function main(): Promise<void> {
       ui.setRunning(true);
     },
     onChallengeReplay() {
+      effects.clear();
       ui.hideChallengeComplete();
       challengeAnnounced = false;
       engine.startChallenge(challengeTarget());
       ui.setRunning(true);
     },
     onChallengeBack() {
+      effects.clear();
       ui.hideChallengeComplete();
       challengeAnnounced = false;
       engine.setArcadeMode();
@@ -169,6 +206,8 @@ async function main(): Promise<void> {
 
   function resize(): void {
     const rect = stage.getBoundingClientRect();
+    playWidth = rect.width;
+    playHeight = rect.height;
     const dpr = window.devicePixelRatio || 1;
     renderer.resize(rect.width, rect.height, dpr);
     engine.resize(rect.width, rect.height);
@@ -177,13 +216,57 @@ async function main(): Promise<void> {
   new ResizeObserver(resize).observe(stage);
   window.addEventListener("resize", resize);
 
-  canvas.addEventListener("pointerdown", (event) => {
-    audio.unlock();
+  function trackPointer(event: PointerEvent): void {
     const rect = canvas.getBoundingClientRect();
-    const result = engine.pop(event.clientX - rect.left, event.clientY - rect.top);
-    if (result.popped) {
-      audio.play();
+    pointerX = event.clientX - rect.left;
+    pointerY = event.clientY - rect.top;
+  }
+
+  function muzzle(): { x: number; y: number } {
+    return { x: playWidth / 2, y: playHeight - 12 };
+  }
+
+  function fire(now: number): void {
+    const interval = FIRE_INTERVAL_MS[weapon];
+    if (weapon !== "click" && now - lastShotAt < interval) {
+      return;
     }
+    lastShotAt = now;
+    shotCount += 1;
+    audio.unlock();
+    if (weapon === "click") {
+      const result = engine.pop(pointerX, pointerY);
+      if (result.popped) {
+        audio.play();
+      }
+      return;
+    }
+    if (weapon === "flame") {
+      return;
+    }
+    const from = muzzle();
+    if (weapon === "grenade") {
+      effects.throwGrenade(from.x, from.y, pointerX, pointerY);
+      return;
+    }
+    effects.fireBurst(from.x, from.y, pointerX, pointerY);
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    trackPointer(event);
+    pointerHeld = true;
+    fire(performance.now());
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (pointerHeld) {
+      trackPointer(event);
+    }
+  });
+  window.addEventListener("pointerup", () => {
+    pointerHeld = false;
+  });
+  window.addEventListener("pointercancel", () => {
+    pointerHeld = false;
   });
 
   window.__POP__ = {
@@ -210,6 +293,9 @@ async function main(): Promise<void> {
     popAt(x, y) {
       return engine.pop(x, y);
     },
+    getWeapon: () => weapon,
+    getShotCount: () => shotCount,
+    getEffectCounts: () => effects.counts(),
   };
 
   let previous = performance.now();
@@ -217,12 +303,23 @@ async function main(): Promise<void> {
   function frame(now: number): void {
     const dt = (now - previous) / 1000;
     previous = now;
+    let flameAim: FlameAim | null = null;
+    if (weapon === "flame" && pointerHeld) {
+      const from = muzzle();
+      effects.emitFlame(from.x, from.y, pointerX, pointerY);
+      flameAim = { sx: from.x, sy: from.y, tx: pointerX, ty: pointerY };
+    }
+    if ((weapon === "auto" || weapon === "grenade") && pointerHeld) {
+      fire(now);
+    }
     const snapshot = engine.tick(dt);
-    renderer.draw(snapshot);
-    latestStats = snapshot.stats;
-    if (snapshot.stats.completed && !challengeAnnounced) {
+    effects.update(dt, engine, snapshot, flameAim);
+    const rendered = engine.tick(0);
+    renderer.draw(rendered, effects);
+    latestStats = rendered.stats;
+    if (rendered.stats.completed && !challengeAnnounced) {
       challengeAnnounced = true;
-      ui.showChallengeComplete(playerName, snapshot.stats.finishTime);
+      ui.showChallengeComplete(playerName, rendered.stats.finishTime);
     }
     if (dt > 0) {
       smoothedFps += (1 / dt - smoothedFps) * 0.08;

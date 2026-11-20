@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#0b1020" />
+    <title>Pop — Éclatez les ballons</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-name">POP</span>
+          <span class="brand-subtitle">Arcade balloon shooter · Rust + WebAssembly</span>
+        </div>
+        <dl class="stats" aria-live="polite">
+          <div class="stat"><dt>Score</dt><dd id="score">0</dd></div>
+          <div class="stat"><dt>Combo</dt><dd id="combo">x1</dd></div>
+          <div class="stat"><dt>Niveau</dt><dd id="level">1</dd></div>
+          <div class="stat hidden" id="timer-stat"><dt>Temps</dt><dd id="timer">0:00.0</dd></div>
+          <div class="stat"><dt>Ballons</dt><dd id="active">0</dd></div>
+          <div class="stat"><dt>FPS</dt><dd id="fps">--</dd></div>
+        </dl>
+      </header>
+
+      <main id="stage" class="stage">
+        <canvas id="game" aria-label="Zone de jeu : cliquez sur les ballons pour les éclater"></canvas>
+        <div id="loading" class="overlay" role="status">Chargement du moteur Rust…</div>
+        <div id="pause-overlay" class="overlay hidden">
+          <strong>En pause</strong>
+          <span>Cliquez sur « Reprendre » pour continuer.</span>
+        </div>
+        <div id="challenge-setup" class="overlay overlay-form hidden">
+          <strong>Défi · <span id="setup-count">60</span> ballons</strong>
+          <label class="setup-field">
+            Votre nom
+            <input id="player-name" type="text" maxlength="24" placeholder="Camille" autocomplete="given-name" />
+          </label>
+          <div class="buttons">
+            <button id="challenge-start" type="button">Commencer le défi</button>
+            <button id="challenge-cancel" type="button">Annuler</button>
+          </div>
+        </div>
+        <div id="challenge-complete" class="overlay overlay-form hidden" role="status">
+          <strong id="challenge-message">Bravo !</strong>
+          <span id="challenge-time">Temps : 0:00.0</span>
+          <div class="buttons">
+            <button id="challenge-replay" type="button">Rejouer</button>
+            <button id="challenge-back" type="button">Retour arcade</button>
+          </div>
+        </div>
+      </main>
+
+      <aside class="controls">
+        <label class="control">
+          <span>Mode</span>
+          <select id="mode" aria-label="Mode de jeu">
+            <option value="arcade">Arcade (sans fin)</option>
+            <option value="challenge">Défi (sans réapparition)</option>
+          </select>
+        </label>
+
+        <label class="control">
+          <span>Difficulté</span>
+          <select id="difficulty" aria-label="Difficulté"></select>
+        </label>
+
+        <label class="control">
+          <span>Ballons <output id="balloons-value">auto</output></span>
+          <input id="balloons" type="range" min="0" max="200" step="10" value="0" aria-label="Nombre de ballons (0 = automatique)" />
+          <small>0 = selon le niveau · 200 = test de charge</small>
+        </label>
+
+        <label class="control">
+          <span>Volume <output id="volume-value">70 %</output></span>
+          <input id="volume" type="range" min="0" max="100" step="1" value="70" aria-label="Volume" />
+        </label>
+
+        <label class="control checkbox">
+          <input id="sound" type="checkbox" checked aria-label="Activer le son" />
+          <span>Son activé</span>
+        </label>
+
+        <div class="buttons">
+          <button id="pause" type="button">Pause</button>
+          <button id="restart" type="button">Nouvelle partie</button>
+          <button id="fullscreen" type="button">Plein écran</button>
+        </div>
+
+        <p id="audio-status" class="audio-status" role="status">Audio : initialisation…</p>
+      </aside>
+
+      <footer class="footer">
+        <span>Cliquez ou touchez un ballon pour l’éclater. Enchaînez rapidement pour augmenter le combo.</span>
+        <span id="engine-status" role="status">Moteur : chargement…</span>
+      </footer>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

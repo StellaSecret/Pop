@@ -1,4 +1,11 @@
-import { BALLOON_STATE, BALLOON_VIEW, type Engine, type Snapshot } from "./engine";
+import {
+  BALLOON_STATE,
+  BALLOON_VIEW,
+  OBSTACLE_VIEW,
+  type Engine,
+  type PopEvent,
+  type Snapshot,
+} from "./engine";
 
 export interface EffectCounts {
   bullets: number;
@@ -51,6 +58,9 @@ interface Blast {
 }
 
 const BULLET_SPEED = 900;
+const BULLET_DAMAGE = 1;
+const FLAME_DAMAGE = 1;
+const GRENADE_DAMAGE = 3;
 const FLAME_RANGE = 700;
 const FLAME_HALF_ANGLE = 0.23;
 const FLAME_TICK = 0.09;
@@ -64,6 +74,11 @@ const MAX_BLASTS = 32;
 
 function lerp(from: number, to: number, t: number): number {
   return from + (to - from) * t;
+}
+
+function applyHit(engine: Engine, x: number, y: number, damage: number): boolean {
+  const result: PopEvent = engine.hit(x, y, damage);
+  return result.popped || result.obstacle_destroyed;
 }
 
 export class PlayEffects {
@@ -195,20 +210,23 @@ export class PlayEffects {
       if (bullet.life > 0) {
         continue;
       }
-      let popped = false;
+      let hit = false;
       if (bullet.radius > 0) {
-        const targets = activeBalloons(snapshot, (x, y) =>
-          Math.hypot(x - bullet.tx, y - bullet.ty) <= bullet.radius,
-        );
+        const near = (x: number, y: number): boolean =>
+          Math.hypot(x - bullet.tx, y - bullet.ty) <= bullet.radius;
+        const targets = [
+          ...activeBalloons(snapshot, near),
+          ...activeObstacles(snapshot, near),
+        ];
         for (const [x, y] of targets) {
-          if (engine.pop(x, y).popped) {
-            popped = true;
+          if (applyHit(engine, x, y, BULLET_DAMAGE)) {
+            hit = true;
           }
         }
       } else {
-        popped = engine.pop(bullet.tx, bullet.ty).popped;
+        hit = applyHit(engine, bullet.tx, bullet.ty, BULLET_DAMAGE);
       }
-      this.onPop(popped);
+      this.onPop(hit);
       this.blasts.push({
         x: bullet.tx,
         y: bullet.ty,
@@ -267,33 +285,36 @@ export class PlayEffects {
     const dirX = dx / length;
     const dirY = dy / length;
     const limit = Math.cos(FLAME_HALF_ANGLE);
-    const targets = activeBalloons(snapshot, (x, y) => {
+    const inCone = (x: number, y: number): boolean => {
       const rx = x - aim.sx;
       const ry = y - aim.sy;
       const distance = Math.hypot(rx, ry);
       return distance > 1 && distance <= FLAME_RANGE && (rx * dirX + ry * dirY) / distance >= limit;
-    });
-    let popped = false;
+    };
+    const targets = [...activeBalloons(snapshot, inCone), ...activeObstacles(snapshot, inCone)];
+    let hit = false;
     for (const [x, y] of targets) {
-      if (engine.pop(x, y).popped) {
-        popped = true;
+      if (applyHit(engine, x, y, FLAME_DAMAGE)) {
+        hit = true;
       }
     }
-    if (popped) {
+    if (hit) {
       this.onPop(true);
     }
   }
 
   private explode(engine: Engine, snapshot: Snapshot, x: number, y: number): void {
-    const targets = activeBalloons(snapshot, (bx, by) => Math.hypot(bx - x, by - y) <= GRENADE_RADIUS);
-    let popped = false;
+    const near = (bx: number, by: number): boolean =>
+      Math.hypot(bx - x, by - y) <= GRENADE_RADIUS;
+    const targets = [...activeBalloons(snapshot, near), ...activeObstacles(snapshot, near)];
+    let hit = false;
     for (const [bx, by] of targets) {
-      if (engine.pop(bx, by).popped) {
-        popped = true;
+      if (applyHit(engine, bx, by, GRENADE_DAMAGE)) {
+        hit = true;
       }
     }
     this.blasts.push({ x, y, age: 0, life: 0.45, radius: GRENADE_RADIUS, small: false });
-    if (popped) {
+    if (hit) {
       this.onPop(true);
     }
     if (this.blasts.length > MAX_BLASTS) {
@@ -382,6 +403,26 @@ function activeBalloons(
     }
     const x = view[offset + BALLOON_VIEW.x]!;
     const y = view[offset + BALLOON_VIEW.y]!;
+    if (predicate(x, y)) {
+      targets.push([x, y]);
+    }
+  }
+  return targets;
+}
+
+function activeObstacles(
+  snapshot: Snapshot,
+  predicate: (x: number, y: number) => boolean,
+): Array<[number, number]> {
+  const { view, headerLen, stride, records, obstacleStride, obstacles } = snapshot;
+  const targets: Array<[number, number]> = [];
+  let offset = headerLen + records * stride;
+  for (let record = 0; record < obstacles; record += 1, offset += obstacleStride) {
+    if ((view[offset + OBSTACLE_VIEW.hp] ?? 0) <= 0) {
+      continue;
+    }
+    const x = view[offset + OBSTACLE_VIEW.x]!;
+    const y = view[offset + OBSTACLE_VIEW.y]!;
     if (predicate(x, y)) {
       targets.push([x, y]);
     }

@@ -1,10 +1,11 @@
 import type { AudioStatus } from "./audio";
-import type { DifficultyInfo, FrameStats } from "./engine";
+import type { DifficultyInfo, FrameStats, MapId } from "./engine";
 
 export type GameMode = "arcade" | "challenge";
 export type Weapon = "click" | "auto" | "flame" | "grenade";
 
 export interface UICallbacks {
+  onMap(map: MapId): void;
   onMode(mode: GameMode): void;
   onWeapon(weapon: Weapon): void;
   onDifficulty(id: number): void;
@@ -53,6 +54,7 @@ export class UI {
   private readonly engineStatus = required<HTMLElement>("engine-status");
   private readonly loading = required<HTMLElement>("loading");
   private readonly pauseOverlay = required<HTMLElement>("pause-overlay");
+  private readonly map = required<HTMLSelectElement>("map");
   private readonly mode = required<HTMLSelectElement>("mode");
   private readonly weapon = required<HTMLSelectElement>("weapon");
   private readonly timerStat = required<HTMLElement>("timer-stat");
@@ -76,6 +78,9 @@ export class UI {
       this.difficulty.append(option);
     }
 
+    this.map.addEventListener("change", () => {
+      callbacks.onMap(this.map.value as MapId);
+    });
     this.mode.addEventListener("change", () => {
       callbacks.onMode(this.mode.value as GameMode);
     });
@@ -127,6 +132,10 @@ export class UI {
 
   setDifficulty(id: number): void {
     this.difficulty.value = String(id);
+  }
+
+  setMap(map: MapId): void {
+    this.map.value = map;
   }
 
   setMode(mode: GameMode): void {

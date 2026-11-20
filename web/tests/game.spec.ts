@@ -42,6 +42,42 @@ test("la difficulté et le nombre de ballons sont pilotables", async ({ page }) 
   await expect.poll(async () => page.evaluate(() => window.__POP__?.getStats().active ?? 0)).toBe(60);
 });
 
+test("les cartes ajoutent des obstacles destructibles", async ({ page }) => {
+  await boot(page);
+  await expect(page.locator("#map option")).toHaveCount(3);
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getMap() ?? "night")).toBe("night");
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getObstacleCount() ?? -1)).toBe(0);
+
+  await page.locator("#map").selectOption("forest");
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getMap() ?? "night")).toBe("forest");
+  const before = await page.evaluate(() => window.__POP__?.getObstacleCount() ?? -1);
+  expect(before).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "Pause" }).click();
+  for (let i = 0; i < before; i += 1) {
+    const obstacle = await page.evaluate(() => window.__POP__?.firstObstacle());
+    if (!obstacle) {
+      break;
+    }
+    const hit = await page.evaluate(
+      ({ x, y }) => window.__POP__?.hitAt(x, y, 10),
+      { x: obstacle.x, y: obstacle.y },
+    );
+    if (hit?.obstacle_destroyed) {
+      break;
+    }
+  }
+  await expect
+    .poll(async () => page.evaluate(() => window.__POP__?.getObstacleCount() ?? -1))
+    .toBe(before - 1);
+
+  await page.locator("#map").selectOption("house");
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getMap() ?? "night")).toBe("house");
+  await expect
+    .poll(async () => page.evaluate(() => window.__POP__?.getObstacleCount() ?? -1))
+    .toBeGreaterThan(0);
+});
+
 test("les enregistrements audio réels sont chargés", async ({ page }) => {
   const audioResponses: string[] = [];
   page.on("response", (response) => {

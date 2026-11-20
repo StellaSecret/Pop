@@ -6,6 +6,8 @@
 pub mod balloon;
 pub mod config;
 pub mod game;
+pub mod map;
+pub mod obstacle;
 pub mod physics;
 pub mod rng;
 pub mod rules;

@@ -24,6 +24,7 @@ export interface HeaderOffsets {
   elapsed: number;
   completed: number;
   finish_time: number;
+  obstacles: number;
 }
 
 export interface PopEvent {
@@ -34,6 +35,8 @@ export interface PopEvent {
   color_index: number;
   points: number;
   combo: number;
+  obstacle_hit: boolean;
+  obstacle_destroyed: boolean;
 }
 
 export interface FrameStats {
@@ -46,6 +49,7 @@ export interface FrameStats {
   elapsed: number;
   completed: boolean;
   finishTime: number;
+  obstacles: number;
 }
 
 /** One per-frame read of the WASM snapshot buffer. Reused between frames. */
@@ -54,6 +58,8 @@ export interface Snapshot {
   headerLen: number;
   stride: number;
   records: number;
+  obstacleStride: number;
+  obstacles: number;
   stats: FrameStats;
 }
 
@@ -70,6 +76,30 @@ export const BALLOON_VIEW = {
 
 export const BALLOON_STATE = { active: 0, popped: 1 } as const;
 
+export const OBSTACLE_VIEW = {
+  x: 0,
+  y: 1,
+  radius: 2,
+  hp: 3,
+  kind: 4,
+} as const;
+
+export const OBSTACLE_KIND = {
+  bush: 0,
+  rock: 1,
+  crate: 2,
+  sofa: 3,
+  table: 4,
+} as const;
+
+export type MapId = "night" | "forest" | "house";
+
+export const MAP_ID: Record<MapId, number> = {
+  night: 0,
+  forest: 1,
+  house: 2,
+};
+
 export class Engine {
   readonly gameInfo: GameInfo;
 
@@ -78,6 +108,7 @@ export class Engine {
   private readonly offsets: HeaderOffsets;
   private readonly headerLen: number;
   private readonly stride: number;
+  private readonly obstacleStride: number;
   private readonly snapshotData: Snapshot;
 
   private cachedPtr = -1;
@@ -91,11 +122,14 @@ export class Engine {
     this.offsets = PopGame.header_offsets() as HeaderOffsets;
     this.headerLen = PopGame.header_len();
     this.stride = PopGame.view_stride();
+    this.obstacleStride = PopGame.obstacle_view_stride();
     this.snapshotData = {
       view: new Float32Array(0),
       headerLen: this.headerLen,
       stride: this.stride,
       records: 0,
+      obstacleStride: this.obstacleStride,
+      obstacles: 0,
       stats: {
         score: 0,
         combo: 0,
@@ -106,6 +140,7 @@ export class Engine {
         elapsed: 0,
         completed: false,
         finishTime: 0,
+        obstacles: 0,
       },
     };
     this.readSnapshot();
@@ -122,6 +157,10 @@ export class Engine {
 
   setDifficulty(difficulty: number): void {
     this.game.set_difficulty(difficulty);
+  }
+
+  setMap(map: MapId): void {
+    this.game.set_map(MAP_ID[map]);
   }
 
   startChallenge(count: number): void {
@@ -156,6 +195,10 @@ export class Engine {
     return this.game.pop_at(x, y) as PopEvent;
   }
 
+  hit(x: number, y: number, damage: number): PopEvent {
+    return this.game.hit_at(x, y, damage) as PopEvent;
+  }
+
   /** Advances the simulation and returns a fresh view of the shared buffer. */
   tick(dt: number): Snapshot {
     this.game.update(dt);
@@ -186,7 +229,9 @@ export class Engine {
     stats.elapsed = view[o.elapsed] ?? 0;
     stats.completed = (view[o.completed] ?? 0) !== 0;
     stats.finishTime = view[o.finish_time] ?? 0;
+    stats.obstacles = view[o.obstacles] ?? 0;
     this.snapshotData.records = stats.records;
+    this.snapshotData.obstacles = stats.obstacles;
     return this.snapshotData;
   }
 }

@@ -5,7 +5,9 @@ import {
   BALLOON_STATE,
   BALLOON_VIEW,
   Engine,
+  OBSTACLE_VIEW,
   type FrameStats,
+  type MapId,
   type PopEvent,
   type Snapshot,
 } from "./engine";
@@ -20,8 +22,12 @@ declare global {
       getLoadedSounds(): number;
       isRunning(): boolean;
       getDifficulty(): number;
+      getMap(): MapId;
+      getObstacleCount(): number;
       firstActiveBalloon(): { x: number; y: number; radius: number } | null;
+      firstObstacle(): { x: number; y: number; radius: number; hp: number } | null;
       popAt(x: number, y: number): PopEvent;
+      hitAt(x: number, y: number, damage: number): PopEvent;
       getWeapon(): Weapon;
       getShotCount(): number;
       getEffectCounts(): EffectCounts;
@@ -49,13 +55,15 @@ async function main(): Promise<void> {
   const canvas = required<HTMLCanvasElement>("game");
 
   const initial = stage.getBoundingClientRect();
+  let currentMap: MapId = "night";
   const engine = await Engine.create(initial.width, initial.height, 1);
   const renderer = new Renderer(canvas);
   renderer.setPalette(engine.gameInfo.palette);
+  renderer.setMap(currentMap);
 
   const audio = new AudioManager();
-  const effects = new PlayEffects((popped) => {
-    if (popped) {
+  const effects = new PlayEffects((hit) => {
+    if (hit) {
       audio.play();
     }
   });
@@ -80,6 +88,7 @@ async function main(): Promise<void> {
     elapsed: 0,
     completed: false,
     finishTime: 0,
+    obstacles: 0,
   };
 
   function challengeTarget(): number {
@@ -93,6 +102,18 @@ async function main(): Promise<void> {
   }
 
   const ui = new UI(engine.gameInfo.difficulties, {
+    onMap(value) {
+      currentMap = value;
+      renderer.setMap(value);
+      engine.setMap(value);
+      pointerHeld = false;
+      lastShotAt = Number.NEGATIVE_INFINITY;
+      effects.clear();
+      ui.hideChallengeSetup();
+      ui.hideChallengeComplete();
+      challengeAnnounced = false;
+      ui.setRunning(true);
+    },
     onWeapon(value) {
       weapon = value;
       pointerHeld = false;
@@ -236,7 +257,7 @@ async function main(): Promise<void> {
     audio.unlock();
     if (weapon === "click") {
       const result = engine.pop(pointerX, pointerY);
-      if (result.popped) {
+      if (result.popped || result.obstacle_destroyed) {
         audio.play();
       }
       return;
@@ -275,6 +296,8 @@ async function main(): Promise<void> {
     getLoadedSounds: () => audio.loadedCount,
     isRunning: () => engine.isRunning(),
     getDifficulty: () => currentDifficulty,
+    getMap: () => currentMap,
+    getObstacleCount: () => engine.tick(0).stats.obstacles,
     firstActiveBalloon() {
       const snapshot = engine.tick(0) as Snapshot;
       const { view, headerLen, stride, records } = snapshot;
@@ -290,8 +313,28 @@ async function main(): Promise<void> {
       }
       return null;
     },
+    firstObstacle() {
+      const snapshot = engine.tick(0) as Snapshot;
+      const { view, headerLen, stride, records, obstacleStride, obstacles } = snapshot;
+      let offset = headerLen + records * stride;
+      for (let record = 0; record < obstacles; record += 1, offset += obstacleStride) {
+        if ((view[offset + OBSTACLE_VIEW.hp] ?? 0) <= 0) {
+          continue;
+        }
+        return {
+          x: view[offset + OBSTACLE_VIEW.x]!,
+          y: view[offset + OBSTACLE_VIEW.y]!,
+          radius: view[offset + OBSTACLE_VIEW.radius]!,
+          hp: view[offset + OBSTACLE_VIEW.hp]!,
+        };
+      }
+      return null;
+    },
     popAt(x, y) {
       return engine.pop(x, y);
+    },
+    hitAt(x, y, damage) {
+      return engine.hit(x, y, damage);
     },
     getWeapon: () => weapon,
     getShotCount: () => shotCount,

@@ -4,7 +4,9 @@ use crate::engine::balloon::{Balloon, BalloonState, VIEW_STRIDE};
 use crate::engine::config::{
     level_for_score, speed_multiplier, target_for_level, Difficulty, Mode, SNAPSHOT_HEADER,
 };
-use crate::engine::physics::{integrate, resolve_walls, CollisionGrid};
+use crate::engine::map::MapId;
+use crate::engine::obstacle::{Obstacle, VIEW_STRIDE as OBSTACLE_VIEW_STRIDE};
+use crate::engine::physics::{integrate, resolve_obstacles, resolve_walls, CollisionGrid};
 use crate::engine::rng::Rng;
 use crate::engine::rules::ScoreKeeper;
 
@@ -23,6 +25,8 @@ pub struct PopResult {
     pub color_index: u8,
     pub points: u32,
     pub combo: u32,
+    pub obstacle_hit: bool,
+    pub obstacle_destroyed: bool,
 }
 
 impl PopResult {
@@ -35,6 +39,8 @@ impl PopResult {
             color_index: 0,
             points: 0,
             combo: 0,
+            obstacle_hit: false,
+            obstacle_destroyed: false,
         }
     }
 }
@@ -57,6 +63,8 @@ pub struct Game {
     mode: Mode,
     completed: bool,
     finish_time: f32,
+    map: MapId,
+    obstacles: Vec<Obstacle>,
 }
 
 impl Game {
@@ -80,7 +88,10 @@ impl Game {
             mode: Mode::Arcade,
             completed: false,
             finish_time: 0.0,
+            map: MapId::Night,
+            obstacles: Vec::new(),
         };
+        game.obstacles = game.build_obstacles();
         game.fill_initial_balloons();
         game.rebuild_snapshot();
         game
@@ -119,6 +130,16 @@ impl Game {
     #[must_use]
     pub const fn finish_time(&self) -> f32 {
         self.finish_time
+    }
+
+    #[must_use]
+    pub const fn map(&self) -> MapId {
+        self.map
+    }
+
+    #[must_use]
+    pub fn obstacle_count(&self) -> usize {
+        self.obstacles.iter().filter(|o| o.is_alive()).count()
     }
 
     #[must_use]
@@ -163,8 +184,10 @@ impl Game {
         self.spawn(dt);
 
         integrate(&mut self.balloons, dt, self.width, self.height);
+        resolve_obstacles(&mut self.balloons, &self.obstacles);
         self.grid.rebuild(&self.balloons, self.width, self.height);
         self.grid.resolve_collisions(&mut self.balloons);
+        resolve_obstacles(&mut self.balloons, &self.obstacles);
         for balloon in self.balloons.iter_mut().filter(|b| b.is_active()) {
             resolve_walls(balloon, self.width, self.height);
         }
@@ -172,8 +195,11 @@ impl Game {
         self.rebuild_snapshot();
     }
 
-    /// Pops the topmost active balloon under `(x, y)`, if any.
     pub fn pop_at(&mut self, x: f32, y: f32) -> PopResult {
+        self.hit_at(x, y, 1)
+    }
+
+    pub fn hit_at(&mut self, x: f32, y: f32, damage: u32) -> PopResult {
         if let Some(index) = self
             .balloons
             .iter()
@@ -194,22 +220,60 @@ impl Game {
                 color_index: balloon.color_index,
                 points,
                 combo: self.score.combo(),
+                obstacle_hit: false,
+                obstacle_destroyed: false,
             };
             self.rebuild_snapshot();
-            result
-        } else {
-            PopResult::miss()
+            return result;
         }
+
+        if let Some(index) = self
+            .obstacles
+            .iter()
+            .rposition(|o| o.is_alive() && o.contains_point(x, y))
+        {
+            let (ox, oy, destroyed) = {
+                let obstacle = &mut self.obstacles[index];
+                (obstacle.x, obstacle.y, obstacle.damage(damage))
+            };
+            let result = PopResult {
+                popped: false,
+                id: 0,
+                x: ox,
+                y: oy,
+                color_index: 0,
+                points: 0,
+                combo: self.score.combo(),
+                obstacle_hit: true,
+                obstacle_destroyed: destroyed,
+            };
+            if destroyed {
+                self.obstacles.remove(index);
+            }
+            self.rebuild_snapshot();
+            return result;
+        }
+
+        PopResult::miss()
     }
 
     pub fn resize(&mut self, width: f32, height: f32) {
         self.width = width.max(1.0);
         self.height = height.max(1.0);
+        for obstacle in &mut self.obstacles {
+            obstacle.layout(self.width, self.height);
+        }
         for balloon in &mut self.balloons {
             resolve_walls(balloon, self.width, self.height);
         }
+        resolve_obstacles(&mut self.balloons, &self.obstacles);
         self.grid.rebuild(&self.balloons, self.width, self.height);
         self.rebuild_snapshot();
+    }
+
+    pub fn set_map(&mut self, map: MapId) {
+        self.map = map;
+        self.restart();
     }
 
     pub fn set_difficulty(&mut self, difficulty: Difficulty) {
@@ -268,8 +332,29 @@ impl Game {
         self.running = true;
         self.completed = false;
         self.finish_time = 0.0;
+        self.obstacles = self.build_obstacles();
         self.fill_initial_balloons();
         self.rebuild_snapshot();
+    }
+
+    fn build_obstacles(&self) -> Vec<Obstacle> {
+        self.map
+            .obstacles()
+            .iter()
+            .enumerate()
+            .map(|(index, def)| {
+                let mut obstacle = Obstacle::new(
+                    index as u32 + 1,
+                    def.nx,
+                    def.ny,
+                    def.radius,
+                    def.hp,
+                    def.kind,
+                );
+                obstacle.layout(self.width, self.height);
+                obstacle
+            })
+            .collect()
     }
 
     fn fill_initial_balloons(&mut self) {
@@ -342,7 +427,7 @@ impl Game {
         for _ in 0..12 {
             let x = self.rng.range_f32(min_x, max_x);
             let y = self.rng.range_f32(min_y, max_y);
-            let clear = self.balloons.iter().all(|other| {
+            let clear_balloons = self.balloons.iter().all(|other| {
                 !other.is_active() || {
                     let dx = other.x - x;
                     let dy = other.y - y;
@@ -350,7 +435,13 @@ impl Game {
                     dx * dx + dy * dy > min * min
                 }
             });
-            if clear {
+            let clear_obstacles = self.obstacles.iter().all(|obstacle| {
+                let dx = obstacle.x - x;
+                let dy = obstacle.y - y;
+                let min = obstacle.radius + radius + 4.0;
+                dx * dx + dy * dy > min * min
+            });
+            if clear_balloons && clear_obstacles {
                 return (x, y);
             }
         }
@@ -373,7 +464,9 @@ impl Game {
 
     fn rebuild_snapshot(&mut self) {
         let records = self.balloons.len();
-        let needed = SNAPSHOT_HEADER + records * VIEW_STRIDE;
+        let obstacle_records = self.obstacles.len();
+        let needed =
+            SNAPSHOT_HEADER + records * VIEW_STRIDE + obstacle_records * OBSTACLE_VIEW_STRIDE;
         if self.snapshot.len() != needed {
             self.snapshot.resize(needed, 0.0);
         }
@@ -390,11 +483,16 @@ impl Game {
         view[header::ELAPSED] = self.elapsed;
         view[header::COMPLETED] = if self.completed { 1.0 } else { 0.0 };
         view[header::FINISH_TIME] = self.finish_time;
+        view[header::OBSTACLES] = obstacle_records as f32;
 
         let mut offset = SNAPSHOT_HEADER;
         for balloon in &self.balloons {
             balloon.write_view(view, offset);
             offset += VIEW_STRIDE;
+        }
+        for obstacle in &self.obstacles {
+            obstacle.write_view(view, offset);
+            offset += OBSTACLE_VIEW_STRIDE;
         }
     }
 }
@@ -404,6 +502,8 @@ mod tests {
     use super::Game;
     use crate::engine::balloon::{view, BalloonState, VIEW_STRIDE};
     use crate::engine::config::{header, Difficulty, Mode, SNAPSHOT_HEADER};
+    use crate::engine::map::MapId;
+    use crate::engine::obstacle::VIEW_STRIDE as OBSTACLE_VIEW_STRIDE;
 
     fn game() -> Game {
         Game::new(800.0, 600.0, Difficulty::Easy, 1234)
@@ -559,5 +659,67 @@ mod tests {
         assert!(game.finish_time() > 0.0);
         assert_eq!(game.snapshot()[header::COMPLETED], 1.0);
         assert_eq!(game.snapshot()[header::FINISH_TIME], game.finish_time());
+    }
+
+    #[test]
+    fn map_switch_creates_obstacles_and_snapshot_records() {
+        let mut game = game();
+        assert_eq!(game.map(), MapId::Night);
+        assert_eq!(game.obstacle_count(), 0);
+
+        game.set_map(MapId::Forest);
+        assert_eq!(game.map(), MapId::Forest);
+        assert_eq!(game.obstacle_count(), 6);
+        assert_eq!(game.snapshot()[header::OBSTACLES], 6.0);
+        assert_eq!(
+            game.snapshot().len(),
+            SNAPSHOT_HEADER + 60 * VIEW_STRIDE + 6 * OBSTACLE_VIEW_STRIDE
+        );
+    }
+
+    #[test]
+    fn spawned_balloons_avoid_obstacles() {
+        let mut game = game();
+        game.set_map(MapId::Forest);
+        assert!(game.obstacles.iter().all(|obstacle| {
+            game.balloons
+                .iter()
+                .all(|balloon| !obstacle.blocks(balloon, 0.0))
+        }));
+    }
+
+    #[test]
+    fn hit_at_damages_and_destroys_obstacles() {
+        let mut game = game();
+        game.set_map(MapId::Forest);
+        let (x, y, radius) = {
+            let obstacle = &game.obstacles[0];
+            (obstacle.x, obstacle.y, obstacle.radius)
+        };
+
+        let first = game.hit_at(x, y, 1);
+        assert!(first.obstacle_hit);
+        assert!(!first.obstacle_destroyed);
+        assert!(!first.popped);
+        assert_eq!(game.obstacle_count(), 6);
+
+        let second = game.hit_at(x + radius * 0.5, y, 1);
+        assert!(second.obstacle_hit);
+        assert!(second.obstacle_destroyed);
+        assert_eq!(game.obstacle_count(), 5);
+        assert_eq!(game.snapshot()[header::OBSTACLES], 5.0);
+    }
+
+    #[test]
+    fn resize_keeps_obstacles_inside() {
+        let mut game = game();
+        game.set_map(MapId::House);
+        game.resize(360.0, 240.0);
+        for obstacle in &game.obstacles {
+            assert!(obstacle.x >= obstacle.radius - 0.01);
+            assert!(obstacle.x <= 360.0 - obstacle.radius + 0.01);
+            assert!(obstacle.y >= obstacle.radius - 0.01);
+            assert!(obstacle.y <= 240.0 - obstacle.radius + 0.01);
+        }
     }
 }

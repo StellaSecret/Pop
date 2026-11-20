@@ -10,14 +10,16 @@
 //! single flat `Float32Array` in WASM linear memory:
 //!
 //! ```text
-//! [ header: 9 f32 ][ balloon record: 7 f32 ][ balloon record: 7 f32 ] ...
+//! [ header: 10 f32 ][ balloon record: 7 f32 ] ... [ obstacle record: 5 f32 ] ...
 //! ```
 //!
 //! Header: `score, combo, max_combo, level, active_count, record_count,
-//! elapsed_seconds, completed, finish_time`.
+//! elapsed_seconds, completed, finish_time, obstacle_count`.
 //!
 //! Balloon record: `id, x, y, radius, color_index, state, pop_progress`, where
 //! `state` is `0` (active) or `1` (popped) and `pop_progress` is `0..1`.
+//!
+//! Obstacle record: `x, y, radius, hp_ratio, kind`.
 //!
 //! The JS side reads `snapshot_ptr()`, `snapshot_len()` and `memory()` once
 //! per frame, then wraps the memory in a `Float32Array` view. No data is
@@ -28,6 +30,8 @@ pub mod engine;
 use engine::balloon::VIEW_STRIDE;
 use engine::config::{header, Difficulty, DifficultyInfo, PALETTE, SNAPSHOT_HEADER};
 use engine::game::{Game, PopResult};
+use engine::map::MapId;
+use engine::obstacle::VIEW_STRIDE as OBSTACLE_VIEW_STRIDE;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -65,6 +69,11 @@ impl PopGame {
         self.inner.set_difficulty(Difficulty::from_u32(difficulty));
     }
 
+    /// Switches map and starts a fresh round with its obstacles.
+    pub fn set_map(&mut self, map: u32) {
+        self.inner.set_map(MapId::from_u32(map));
+    }
+
     /// Starts a fixed-population challenge: no respawn, timer stops when cleared.
     pub fn start_challenge(&mut self, count: u32) {
         self.inner.start_challenge(count);
@@ -87,12 +96,16 @@ impl PopGame {
         self.inner.update(dt);
     }
 
-    /// Attempts to pop the topmost active balloon covering `(x, y)`.
-    ///
-    /// Returns `{ popped, id, x, y, color_index, points, combo }`. On a miss,
-    /// `popped` is `false` and all other fields are zero.
+    /// Pops the topmost active balloon covering `(x, y)`, or deals 1 damage
+    /// to the obstacle under the point.
     pub fn pop_at(&mut self, x: f32, y: f32) -> JsValue {
         let result: PopResult = self.inner.pop_at(x, y);
+        serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
+    }
+
+    /// Pops a balloon or damages an obstacle by `damage`.
+    pub fn hit_at(&mut self, x: f32, y: f32, damage: u32) -> JsValue {
+        let result: PopResult = self.inner.hit_at(x, y, damage);
         serde_wasm_bindgen::to_value(&result).unwrap_or(JsValue::NULL)
     }
 
@@ -125,7 +138,7 @@ impl PopGame {
         self.inner.snapshot().len()
     }
 
-    /// Number of floats in the snapshot header (currently 9).
+    /// Number of floats in the snapshot header (currently 10).
     pub fn header_len() -> usize {
         SNAPSHOT_HEADER
     }
@@ -133,6 +146,11 @@ impl PopGame {
     /// Number of floats per balloon record (currently 7).
     pub fn view_stride() -> usize {
         VIEW_STRIDE
+    }
+
+    /// Number of floats per obstacle record (currently 5).
+    pub fn obstacle_view_stride() -> usize {
+        OBSTACLE_VIEW_STRIDE
     }
 
     /// Header field offsets as a plain JS object.
@@ -147,6 +165,7 @@ impl PopGame {
             elapsed: header::ELAPSED,
             completed: header::COMPLETED,
             finish_time: header::FINISH_TIME,
+            obstacles: header::OBSTACLES,
         })
         .unwrap_or(JsValue::NULL)
     }
@@ -172,6 +191,7 @@ struct HeaderOffsets {
     elapsed: usize,
     completed: usize,
     finish_time: usize,
+    obstacles: usize,
 }
 
 /// Returns static game configuration as a plain JS object. Call once at

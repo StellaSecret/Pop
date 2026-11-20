@@ -1,4 +1,5 @@
 use crate::engine::balloon::Balloon;
+use crate::engine::obstacle::Obstacle;
 
 const COLLISION_EPSILON: f32 = 0.01;
 const RESTITUTION: f32 = 0.96;
@@ -37,6 +38,42 @@ pub fn resolve_walls(balloon: &mut Balloon, width: f32, height: f32) {
     } else if balloon.y + r > height {
         balloon.y = height - r;
         balloon.vy = -balloon.vy.abs();
+    }
+}
+
+pub fn resolve_obstacles(balloons: &mut [Balloon], obstacles: &[Obstacle]) {
+    if obstacles.is_empty() {
+        return;
+    }
+    for balloon in balloons.iter_mut().filter(|b| b.is_active()) {
+        for obstacle in obstacles.iter().filter(|o| o.is_alive()) {
+            let dx = balloon.x - obstacle.x;
+            let dy = balloon.y - obstacle.y;
+            let min = balloon.radius + obstacle.radius;
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq >= min * min {
+                continue;
+            }
+            let (nx, ny, distance) = if dist_sq < 1e-8 {
+                let speed = balloon.vx.hypot(balloon.vy);
+                if speed < 1e-8 {
+                    (1.0, 0.0, 0.0)
+                } else {
+                    (balloon.vx / speed, balloon.vy / speed, 0.0)
+                }
+            } else {
+                let distance = dist_sq.sqrt();
+                (dx / distance, dy / distance, distance)
+            };
+            let overlap = min - distance + COLLISION_EPSILON;
+            balloon.x += nx * overlap;
+            balloon.y += ny * overlap;
+            let velocity = balloon.vx * nx + balloon.vy * ny;
+            if velocity < 0.0 {
+                balloon.vx -= (1.0 + RESTITUTION) * velocity * nx;
+                balloon.vy -= (1.0 + RESTITUTION) * velocity * ny;
+            }
+        }
     }
 }
 
@@ -181,8 +218,9 @@ fn resolve_pair(a: &mut Balloon, b: &mut Balloon) {
 
 #[cfg(test)]
 mod tests {
-    use super::{integrate, resolve_walls, CollisionGrid};
+    use super::{integrate, resolve_obstacles, resolve_walls, CollisionGrid};
     use crate::engine::balloon::Balloon;
+    use crate::engine::obstacle::{Obstacle, ObstacleKind};
 
     #[test]
     fn integration_uses_velocity_and_delta_time() {
@@ -257,5 +295,15 @@ mod tests {
         assert_eq!(grid.buckets.len(), first_len);
         assert_eq!(grid.cols(), 4);
         assert_eq!(grid.rows(), 4);
+    }
+
+    #[test]
+    fn obstacle_bounce_pushes_balloon_out() {
+        let mut balloon = Balloon::new(1, 65.0, 50.0, -20.0, 0.0, 10.0, 0);
+        let mut obstacle = Obstacle::new(1, 0.5, 0.5, 20.0, 3, ObstacleKind::Rock);
+        obstacle.layout(100.0, 100.0);
+        resolve_obstacles(std::slice::from_mut(&mut balloon), &[obstacle]);
+        assert_eq!(balloon.x, 80.01);
+        assert!(balloon.vx > 0.0);
     }
 }

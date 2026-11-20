@@ -2,8 +2,8 @@ use serde::Serialize;
 
 /// Number of `f32` values reserved for game statistics at the head of the
 /// snapshot buffer: `score, combo, max_combo, level, active, records, elapsed,
-/// completed, finish_time`.
-pub const SNAPSHOT_HEADER: usize = 9;
+/// completed, finish_time, obstacles`.
+pub const SNAPSHOT_HEADER: usize = 10;
 
 /// Offsets inside the snapshot header.
 pub mod header {
@@ -16,6 +16,7 @@ pub mod header {
     pub const ELAPSED: usize = 6;
     pub const COMPLETED: usize = 7;
     pub const FINISH_TIME: usize = 8;
+    pub const OBSTACLES: usize = 9;
 }
 
 /// Game mode. Arcade keeps respawning balloons; Challenge has a fixed

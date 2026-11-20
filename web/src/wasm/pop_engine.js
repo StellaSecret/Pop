@@ -15,7 +15,7 @@ export class PopGame {
         wasm.__wbg_popgame_free(ptr, 0);
     }
     /**
-     * Number of floats in the snapshot header (currently 9).
+     * Number of floats in the snapshot header (currently 10).
      * @returns {number}
      */
     static header_len() {
@@ -28,6 +28,17 @@ export class PopGame {
      */
     static header_offsets() {
         const ret = wasm.popgame_header_offsets();
+        return ret;
+    }
+    /**
+     * Pops a balloon or damages an obstacle by `damage`.
+     * @param {number} x
+     * @param {number} y
+     * @param {number} damage
+     * @returns {any}
+     */
+    hit_at(x, y, damage) {
+        const ret = wasm.popgame_hit_at(this.__wbg_ptr, x, y, damage);
         return ret;
     }
     /**
@@ -54,16 +65,22 @@ export class PopGame {
         return this;
     }
     /**
+     * Number of floats per obstacle record (currently 5).
+     * @returns {number}
+     */
+    static obstacle_view_stride() {
+        const ret = wasm.popgame_obstacle_view_stride();
+        return ret >>> 0;
+    }
+    /**
      * Pauses or resumes the simulation (no movement, no spawning).
      */
     pause() {
         wasm.popgame_pause(this.__wbg_ptr);
     }
     /**
-     * Attempts to pop the topmost active balloon covering `(x, y)`.
-     *
-     * Returns `{ popped, id, x, y, color_index, points, combo }`. On a miss,
-     * `popped` is `false` and all other fields are zero.
+     * Pops the topmost active balloon covering `(x, y)`, or deals 1 damage
+     * to the obstacle under the point.
      * @param {number} x
      * @param {number} y
      * @returns {any}
@@ -101,6 +118,13 @@ export class PopGame {
      */
     set_difficulty(difficulty) {
         wasm.popgame_set_difficulty(this.__wbg_ptr, difficulty);
+    }
+    /**
+     * Switches map and starts a fresh round with its obstacles.
+     * @param {number} map
+     */
+    set_map(map) {
+        wasm.popgame_set_map(this.__wbg_ptr, map);
     }
     /**
      * Overrides the target balloon count. `0` restores automatic scaling.

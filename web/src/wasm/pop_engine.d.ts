@@ -8,13 +8,17 @@ export class PopGame {
     free(): void;
     [Symbol.dispose](): void;
     /**
-     * Number of floats in the snapshot header (currently 9).
+     * Number of floats in the snapshot header (currently 10).
      */
     static header_len(): number;
     /**
      * Header field offsets as a plain JS object.
      */
     static header_offsets(): any;
+    /**
+     * Pops a balloon or damages an obstacle by `damage`.
+     */
+    hit_at(x: number, y: number, damage: number): any;
     is_running(): boolean;
     /**
      * Creates a game for a play area of `width` x `height` CSS pixels.
@@ -24,14 +28,16 @@ export class PopGame {
      */
     constructor(width: number, height: number, difficulty: number, seed: number);
     /**
+     * Number of floats per obstacle record (currently 5).
+     */
+    static obstacle_view_stride(): number;
+    /**
      * Pauses or resumes the simulation (no movement, no spawning).
      */
     pause(): void;
     /**
-     * Attempts to pop the topmost active balloon covering `(x, y)`.
-     *
-     * Returns `{ popped, id, x, y, color_index, points, combo }`. On a miss,
-     * `popped` is `false` and all other fields are zero.
+     * Pops the topmost active balloon covering `(x, y)`, or deals 1 damage
+     * to the obstacle under the point.
      */
     pop_at(x: number, y: number): any;
     /**
@@ -51,6 +57,10 @@ export class PopGame {
      * Switches difficulty and starts a fresh round.
      */
     set_difficulty(difficulty: number): void;
+    /**
+     * Switches map and starts a fresh round with its obstacles.
+     */
+    set_map(map: number): void;
     /**
      * Overrides the target balloon count. `0` restores automatic scaling.
      */
@@ -98,8 +108,10 @@ export interface InitOutput {
     readonly info: () => any;
     readonly popgame_header_len: () => number;
     readonly popgame_header_offsets: () => any;
+    readonly popgame_hit_at: (a: number, b: number, c: number, d: number) => any;
     readonly popgame_is_running: (a: number) => number;
     readonly popgame_new: (a: number, b: number, c: number, d: number) => number;
+    readonly popgame_obstacle_view_stride: () => number;
     readonly popgame_pause: (a: number) => void;
     readonly popgame_pop_at: (a: number, b: number, c: number) => any;
     readonly popgame_resize: (a: number, b: number, c: number) => void;
@@ -107,6 +119,7 @@ export interface InitOutput {
     readonly popgame_resume: (a: number) => void;
     readonly popgame_set_arcade_mode: (a: number) => void;
     readonly popgame_set_difficulty: (a: number, b: number) => void;
+    readonly popgame_set_map: (a: number, b: number) => void;
     readonly popgame_set_target_count: (a: number, b: number) => void;
     readonly popgame_snapshot_len: (a: number) => number;
     readonly popgame_snapshot_ptr: (a: number) => number;

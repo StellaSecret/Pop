@@ -2,9 +2,11 @@ import type { AudioStatus } from "./audio";
 import type { DifficultyInfo, FrameStats } from "./engine";
 
 export type GameMode = "arcade" | "challenge";
+export type Weapon = "click" | "semi" | "auto";
 
 export interface UICallbacks {
   onMode(mode: GameMode): void;
+  onWeapon(weapon: Weapon): void;
   onDifficulty(id: number): void;
   onTarget(count: number): void;
   onVolume(value: number): void;
@@ -52,6 +54,7 @@ export class UI {
   private readonly loading = required<HTMLElement>("loading");
   private readonly pauseOverlay = required<HTMLElement>("pause-overlay");
   private readonly mode = required<HTMLSelectElement>("mode");
+  private readonly weapon = required<HTMLSelectElement>("weapon");
   private readonly timerStat = required<HTMLElement>("timer-stat");
   private readonly timer = required<HTMLElement>("timer");
   private readonly challengeSetup = required<HTMLElement>("challenge-setup");
@@ -75,6 +78,9 @@ export class UI {
 
     this.mode.addEventListener("change", () => {
       callbacks.onMode(this.mode.value as GameMode);
+    });
+    this.weapon.addEventListener("change", () => {
+      callbacks.onWeapon(this.weapon.value as Weapon);
     });
     this.difficulty.addEventListener("change", () => {
       callbacks.onDifficulty(Number(this.difficulty.value));

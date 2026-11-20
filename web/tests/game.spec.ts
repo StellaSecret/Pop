@@ -101,3 +101,34 @@ test("le défi se termine avec un message personnalisé", async ({ page }) => {
   await expect.poll(async () => page.evaluate(() => window.__POP__?.getStats().completed ?? false)).toBe(true);
   await expect.poll(async () => page.evaluate(() => window.__POP__?.getStats().finishTime ?? 0)).toBeGreaterThan(0);
 });
+
+test("les armes ont des cadences distinctes", async ({ page }) => {
+  await boot(page);
+  await expect(page.locator("#weapon option")).toHaveCount(3);
+  await expect(page.locator("#weapon")).toHaveValue("click");
+
+  const box = (await page.locator("#game").boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+
+  await page.mouse.click(x, y);
+  await page.mouse.click(x, y);
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getShotCount() ?? 0)).toBe(2);
+
+  await page.locator("#weapon").selectOption("semi");
+  const beforeSemi = await page.evaluate(() => window.__POP__?.getShotCount() ?? 0);
+  await page.mouse.click(x, y);
+  await page.mouse.click(x, y);
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getShotCount() ?? 0)).toBe(beforeSemi + 1);
+  await page.waitForTimeout(350);
+  await page.mouse.click(x, y);
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getShotCount() ?? 0)).toBe(beforeSemi + 2);
+
+  await page.locator("#weapon").selectOption("auto");
+  const beforeAuto = await page.evaluate(() => window.__POP__?.getShotCount() ?? 0);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.waitForTimeout(250);
+  await page.mouse.up();
+  await expect.poll(async () => page.evaluate(() => window.__POP__?.getShotCount() ?? 0)).toBeGreaterThanOrEqual(beforeAuto + 2);
+});

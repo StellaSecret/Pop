@@ -9,7 +9,7 @@ import {
   type Snapshot,
 } from "./engine";
 import { Renderer } from "./renderer";
-import { UI } from "./ui";
+import { UI, type Weapon } from "./ui";
 
 declare global {
   interface Window {
@@ -21,6 +21,8 @@ declare global {
       getDifficulty(): number;
       firstActiveBalloon(): { x: number; y: number; radius: number } | null;
       popAt(x: number, y: number): PopEvent;
+      getWeapon(): Weapon;
+      getShotCount(): number;
     };
   }
 }
@@ -32,6 +34,8 @@ function required<T extends HTMLElement>(id: string): T {
   }
   return element as T;
 }
+
+const FIRE_INTERVAL_MS: Record<Weapon, number> = { click: 0, semi: 300, auto: 80 };
 
 async function main(): Promise<void> {
   const stage = required<HTMLElement>("stage");
@@ -46,6 +50,12 @@ async function main(): Promise<void> {
   let currentDifficulty = 1;
   let playerName = "";
   let challengeAnnounced = false;
+  let weapon: Weapon = "click";
+  let pointerHeld = false;
+  let pointerX = 0;
+  let pointerY = 0;
+  let lastShotAt = Number.NEGATIVE_INFINITY;
+  let shotCount = 0;
   let latestStats: FrameStats = {
     score: 0,
     combo: 0,
@@ -69,6 +79,10 @@ async function main(): Promise<void> {
   }
 
   const ui = new UI(engine.gameInfo.difficulties, {
+    onWeapon(value) {
+      weapon = value;
+      lastShotAt = Number.NEGATIVE_INFINITY;
+    },
     onMode(mode) {
       ui.setMode(mode);
       ui.hideChallengeSetup();
@@ -177,13 +191,41 @@ async function main(): Promise<void> {
   new ResizeObserver(resize).observe(stage);
   window.addEventListener("resize", resize);
 
-  canvas.addEventListener("pointerdown", (event) => {
-    audio.unlock();
+  function trackPointer(event: PointerEvent): void {
     const rect = canvas.getBoundingClientRect();
-    const result = engine.pop(event.clientX - rect.left, event.clientY - rect.top);
+    pointerX = event.clientX - rect.left;
+    pointerY = event.clientY - rect.top;
+  }
+
+  function fire(now: number): void {
+    const interval = FIRE_INTERVAL_MS[weapon];
+    if (weapon !== "click" && now - lastShotAt < interval) {
+      return;
+    }
+    lastShotAt = now;
+    shotCount += 1;
+    audio.unlock();
+    const result = engine.pop(pointerX, pointerY);
     if (result.popped) {
       audio.play();
     }
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    trackPointer(event);
+    pointerHeld = true;
+    fire(performance.now());
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (pointerHeld) {
+      trackPointer(event);
+    }
+  });
+  window.addEventListener("pointerup", () => {
+    pointerHeld = false;
+  });
+  window.addEventListener("pointercancel", () => {
+    pointerHeld = false;
   });
 
   window.__POP__ = {
@@ -210,6 +252,8 @@ async function main(): Promise<void> {
     popAt(x, y) {
       return engine.pop(x, y);
     },
+    getWeapon: () => weapon,
+    getShotCount: () => shotCount,
   };
 
   let previous = performance.now();
@@ -217,6 +261,9 @@ async function main(): Promise<void> {
   function frame(now: number): void {
     const dt = (now - previous) / 1000;
     previous = now;
+    if (weapon === "auto" && pointerHeld) {
+      fire(now);
+    }
     const snapshot = engine.tick(dt);
     renderer.draw(snapshot);
     latestStats = snapshot.stats;

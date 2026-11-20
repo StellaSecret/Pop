@@ -1,0 +1,205 @@
+name: CI/CD Pop
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true 
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── SECURITY SCAN ─────────────────────────────────────
+  scan-secrets:
+    name: Secret Scan
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          # Pinned to 3.88.0 (no v prefix: GHCR tag).
+          version: 3.88.0
+          path: ./
+          base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+          head: ${{ github.sha }}
+          extra_args: --only-verified
+
+  # ── SUPPLY CHAIN SCAN ─────────────────────────────────
+  # Advisories, licenses, bans and dependency sources against deny.toml.
+  supply-chain:
+    name: Supply Chain (cargo-deny)
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+          command-arguments: all
+
+  # ── RUST CORE ─────────────────────────────────────────
+  # The whole engine is windowless: tests, lint and the WASM target check
+  # run natively without a browser.
+  rust-core:
+    name: Rust Core (test + lint + WASM check)
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --locked
+      - name: Run tests
+        run: cargo test --workspace --release --locked
+      - name: Check WASM target
+        run: cargo check --locked --target wasm32-unknown-unknown --lib
+
+  # ── WEB (WASM) BUILD ──────────────────────────────────
+  web-build:
+    name: Build WASM + Web
+    needs: [rust-core, supply-chain]
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: v0.15.0
+      - name: Build WASM
+        run: wasm-pack build --target web --release --out-dir web/src/wasm --out-name pop_engine
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: web
+      - name: Build web bundle
+        run: npm run build
+        working-directory: web
+      - name: Upload web bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist/
+          retention-days: 7
+
+  # ── BROWSER INTEGRATION TESTS ─────────────────────────
+  web-e2e:
+    name: Browser tests (Playwright)
+    needs: [web-build]
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci
+        working-directory: web
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist/
+      - name: Run browser tests
+        run: npm run test:e2e
+        working-directory: web
+
+  # ── DEPLOY WEB TO GITHUB PAGES ────────────────────────
+  deploy-web:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [web-build, web-e2e]
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: ./web-dist/
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web-dist/
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+  # ── RELEASE (self-contained web bundle) ───────────────
+  release:
+    name: Create Release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [web-build, web-e2e]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Download web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web-bundle/
+      - name: Package web bundle
+        run: |
+          mkdir -p dist
+          cd web-bundle && zip -r ../dist/pop-web.zip .
+      - name: List release files
+        run: ls -la dist/
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Pop build #${{ github.run_number }}"
+          body: "Build #${{ github.run_number }}: Rust / WebAssembly arcade game. Self-contained web bundle (open it through a local HTTP server)."
+          files: |
+            dist/pop-web.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
